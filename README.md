@@ -70,88 +70,47 @@ GardenDoctor(텃밭닥터)는 도시농업 입문자가 전문 지식 부족 때
 
 ## Backend 문제 해결과 정량 검증
 
-기능 구현 여부보다 **문제를 어떻게 정의하고, 원인을 어떤 근거로 좁혔으며, 대안을 비교해 무엇을 선택했고, 결과를 어떻게 검증했는지**가 드러나도록 정리했습니다. 수치는 모두 같은 로컬 회귀 조건에서 수정 전·후를 비교했으며 운영 환경의 SLO로 과장하지 않습니다.
+이 리팩토링은 처음부터 성능 수치를 만들기 위해 시작한 작업이 아닙니다. 1차 목표는 **생명주기가 다른 도메인을 강하게 묶고 있던 JPA 연관관계와 물리 FK를 정리하고, broad cascade에 의한 예측하지 못한 Hard Delete를 제거하는 것**이었습니다.
+
+연결 row 삭제가 부모 Diary와 ImageFile까지 전파되는 문제를 재현한 뒤, cross-aggregate 객체 관계를 식별자 참조로 바꾸고 사용자·UserPlant·Plant·Farm에는 도메인별 Soft Delete를 적용했습니다. 이 과정에서 ORM과 DB가 맡던 정합성 책임이 애플리케이션으로 이동했고, 이를 참조 검증, 무결성 진단, shared/exclusive row lock으로 보완했습니다.
+
+객체 그래프를 제거하자 DTO의 LAZY 순회로 발생하던 N+1이 명확하게 드러났습니다. 이를 batch read model로 바꾼 뒤에는 무제한 목록과 deep OFFSET, 대량 알림의 단건 transaction과 외부 FCM 장애 경계, Refresh Token 동시 재사용 문제까지 순서대로 확장해 해결했습니다.
+
+```mermaid
+flowchart LR
+    A[연관관계·Broad Cascade] --> B[예상 밖 삭제와 N+1]
+    B --> C[식별자 참조·Soft Delete]
+    C --> D[Validation·무결성 진단·Lock]
+    C --> E[Batch Read Model]
+    E --> F[Page/Slice·Keyset Cursor]
+    D --> G[Conditional Update]
+    F --> H[JDBC Batch·Transactional Outbox]
+    G --> H
+```
 
 ### 정량 성과 요약
 
-| 문제 | 최종 선택 | 검증 결과 |
+| 리팩토링 흐름 | 최종 선택 | 검증 결과 |
 | --- | --- | --- |
-| 식물 관리 알림의 반복 조회·동기 FCM·중복 실행 | due-date cursor scan + JDBC batch + Transactional Outbox + MySQL advisory lock | 관측값: 5,000건 **39,774ms → 294ms(135.29배)**, 100,000건 생성 **17.52초**, 처리 **28.70초** · assertion: 100/200 batches, backlog **0** |
-| 일지 목록 DTO 변환의 N+1 | 1:N fetch join 대신 ID·이미지 집합 조회 기반 3-query read model | 관측값: 일지 **1건과 30건 모두 3 queries** · regression guard: 증가량 ≤ 1, 전체 ≤ 5 queries |
+| 연관관계와 삭제 정책 | cross-aggregate 식별자 참조 + 도메인별 Soft Delete + 명시적 삭제 | main entity 관계/cascade annotation **0개**, long-lived schema FK **16개 → fresh schema 0개**, 삭제 진단 **8/8 통과** |
+| 관계 제거 후 N+1 | 페이지 조회 + 연결 ID·이미지 `IN` batch read model | Diary **6건 13 queries → 1건·30건 모두 3 queries**, 증가량 ≤ 1·전체 ≤ 5 회귀 조건 |
 | deep OFFSET의 스캔 비용과 페이지 중복·누락 | `(created_at, diary_id)` 복합 keyset cursor | p95 **90.55 → 13.62ms(84.96% 감소·6.65배)**, p99 **98.20 → 17.64ms(82.04% 감소·5.57배)** |
+| 식물 관리 알림의 단건 처리·동기 FCM·중복 실행 | user keyset + JDBC batch + Transactional Outbox + MySQL Named Lock(`GET_LOCK`)·DB unique key | 5,000건 DB 경로 **55.444초 → 1.009초(54.95배)**, 100,000건 pipeline **33.642초**, backlog **0** |
 | raw Refresh Token 저장과 동시 재사용 | SHA-256 fingerprint + 조건부 1-row rotation | raw bearer token 미저장, 동시 재사용을 원자적으로 거부 |
 
-### 대표 사례 — 식물 관리 알림 10만 건을 재시도 가능한 구조로 처리하기
+### 알림 처리량 수치가 서로 다른 이유
 
-#### 1. 문제 정의
+5,000건과 100,000건 수치는 동일 로직에 데이터 크기만 바꾼 결과가 아닙니다.
 
-초기 스케줄러는 모든 식물을 메모리에 올려 상태를 초기화하고, 물주기·가지치기·영양제 대상을 각각 조회했습니다. 대상마다 알림을 저장한 뒤 같은 트랜잭션 흐름에서 FCM을 동기 호출했기 때문에 데이터가 늘면 DB 작업과 외부 네트워크 지연이 함께 누적됐습니다. 다중 인스턴스가 같은 스케줄을 실행할 때 중복 알림을 막거나, FCM 실패 후 재처리할 방법도 필요했습니다.
+| 측정 | 포함 범위 | 결과 |
+| --- | --- | ---: |
+| 5,000건 전후 비교 | 이미 선정된 user ID를 사용자별 5,000 transaction으로 저장 vs 1,000건 단위 5 transaction으로 batch 저장 | **55.444초 → 1.009초** |
+| 100,000건 producer | keyset 대상 조회, 작업 조회·집계, Notification/Outbox 생성, 100 chunk commit | **9.609초**, 약 10,407건/초 |
+| 100,000건 drain | 500건씩 200회 claim, mock FCM 결과, 완료 상태 transaction | **24.033초**, 약 4,161건/초 |
 
-#### 2. 원인 분석
+Outbox drain은 batch마다 claim과 completion을 별도 transaction으로 처리하고 수신 자격·상태·재시도 정보까지 갱신하므로 producer보다 처리량이 낮습니다. 과거 로컬 실행에서 관측된 294ms 등은 실행 시점과 경로가 다른 값이므로 최종 공개 수치와 섞지 않았습니다. FCM은 mock이어서 실제 Firebase network·quota를 포함하지 않으며, 모든 수치는 단일 WSL host의 로컬 회귀 기준이지 운영 SLO가 아닙니다.
 
-- `DATEDIFF` 기반 조회 3개가 인덱스를 효율적으로 사용하기 어렵고 실행마다 전체 대상 범위를 반복 탐색했습니다.
-- 사용자별 서비스 트랜잭션과 FCM 호출이 결합되어 처리량이 외부 API 응답 시간에 좌우됐습니다.
-- 알림 저장 성공과 FCM 발송 실패 사이의 상태를 영속적으로 추적하지 않았습니다.
-- 스케줄러 실행권과 알림의 멱등성을 보장하는 장치가 없었습니다.
-
-#### 3. 해결책 도출 및 비교
-
-| 대안 | 장점 | 한계 | 판단 |
-| --- | --- | --- | --- |
-| JPQL·인덱스만 최적화 | 변경 범위가 작음 | 동기 FCM, 재시도, 중복 실행 문제는 남음 | 부분 해결이라 제외 |
-| `@Async`로 FCM 분리 | 요청 스레드를 빠르게 반환 | 프로세스 종료 시 작업 유실, DB commit과 발송의 원자성·재시도 이력 부족 | 제외 |
-| Kafka/RabbitMQ 도입 | 높은 확장성과 내구성 | 짧은 프로젝트에 broker 운영·장애 지점이 추가됨 | 향후 확장안 |
-| MySQL lock + JDBC batch + Transactional Outbox | 기존 MySQL 안에서 저장 원자성, 멱등성, 재시도와 batch 처리 확보 | MySQL 의존성과 worker 운영 필요 | **선정** |
-
-#### 4. 최종 해결책 선정 및 이유
-
-프로젝트 규모에서는 새로운 broker보다 이미 사용 중인 MySQL을 신뢰 가능한 경계로 삼는 편이 운영 복잡도 대비 효과가 컸습니다. `Notification`과 `FcmOutbox`를 한 트랜잭션에 기록하면 “알림은 저장됐지만 발송 작업은 사라지는” 구간을 없앨 수 있고, 별도 worker가 실패·재시도 상태를 관리할 수 있습니다. MySQL `GET_LOCK`과 event key unique 제약으로 중복 실행도 방어했습니다.
-
-#### 5. 실행
-
-1. 마지막 작업일 계산 대신 `next_*_date`를 저장하고 복합 인덱스를 추가했습니다.
-2. 실행당 3개 대상 조회를 user ID cursor 기반 1개 due-date scan으로 통합했습니다.
-3. `findAll + entity update` 초기화를 조건부 bulk `UPDATE` 1회로 변경했습니다.
-4. 1,000명 단위 JDBC batch로 Notification과 Outbox를 함께 만들었습니다.
-5. FCM worker가 500건씩 처리하고 최대 5회 재시도하도록 분리했습니다.
-
-수정된 구조는 [`UserPlantCareJobService`](services/backend/src/main/java/com/project/farming/domain/userplant/service/UserPlantCareJobService.java), [`CareNotificationBatchWriter`](services/backend/src/main/java/com/project/farming/domain/userplant/service/CareNotificationBatchWriter.java), [`FcmOutboxProcessor`](services/backend/src/main/java/com/project/farming/domain/notification/outbox/FcmOutboxProcessor.java), [`MySqlAdvisoryLockService`](services/backend/src/main/java/com/project/farming/global/scheduling/MySqlAdvisoryLockService.java)에서 확인할 수 있습니다.
-
-#### 6. 성과와 한계
-
-- 5,000건 DB 기록: 사용자별 트랜잭션 **39,774ms → JDBC batch 294ms**, **135.29배**
-- 100,000건 생성: **17.52초**, 5,707.76 users/s, 100 batches
-- 100,000건 처리: **28.70초**, 3,484.93 rows/s, 200 batches
-- 처리 전후 backlog: **100,000 → 0**, producer·worker 최대 active DB connection 각 1개
-- 단, FCM은 mock이므로 실제 네트워크 지연·Firebase quota까지 검증한 운영 SLO는 아닙니다.
-
-### 사례 2 — 일지 목록의 N+1을 고정 쿼리 read model로 전환
-
-1. **문제 정의**: 일지 목록을 DTO로 변환할 때 연결 식물과 이미지 조회가 행마다 반복되어 목록 크기에 따라 쿼리가 늘어날 수 있었습니다.
-2. **원인 분석**: 페이지 조회 이후 연관 정보를 개별 탐색하는 변환 흐름이 읽기 횟수를 데이터 행 수에 결합했습니다.
-3. **대안 비교**: 1:N fetch join은 pagination 시 중복 행과 메모리 페이징 위험이 있고, batch fetch는 전역 ORM 설정에 성능이 의존합니다. 페이지 ID를 기준으로 필요한 관계를 집합 조회하는 read model은 쿼리 예산이 명확했습니다.
-4. **선정·실행**: 일지 페이지 1회, `diaryId IN (...)` 연결 정보 1회, `imageId IN (...)` 이미지 1회로 조회하고 Map으로 조합했습니다. 구현은 [`DiaryService`](services/backend/src/main/java/com/project/farming/domain/diary/service/DiaryService.java)와 [`DiaryUserPlantRepository`](services/backend/src/main/java/com/project/farming/domain/diary/repository/DiaryUserPlantRepository.java)에 있습니다.
-5. **성과**: 측정 당시 1건과 30건 모두 3 queries를 관측했습니다. [`DiaryNPlusOneIntegrationDiagnosticsTest`](services/backend/src/test/java/com/project/farming/integration/DiaryNPlusOneIntegrationDiagnosticsTest.java)는 환경 차이를 고려해 증가량 1 이하와 전체 5 queries 이하를 회귀 조건으로 검증합니다.
-
-### 사례 3 — Deep OFFSET을 복합 Keyset Cursor로 전환
-
-1. **문제 정의**: `OFFSET 80000`처럼 뒤쪽 페이지로 갈수록 앞선 행을 읽고 버리는 비용이 커졌고, 생성 시간이 같은 일지에서는 페이지 중복·누락 가능성이 있었습니다.
-2. **원인 분석**: index를 추가해도 DB가 offset만큼 이동하는 비용은 남으며, `created_at` 하나만으로는 동일 timestamp의 순서를 확정할 수 없습니다.
-3. **대안 비교**: OFFSET 유지는 임의 페이지 이동이 쉽지만 깊이에 비례해 느려지고, 단일 timestamp cursor는 동률을 처리하지 못합니다. `(created_at, diary_id)` tuple은 안정적인 전체 순서와 index range scan을 함께 제공합니다.
-4. **선정·실행**: 최신순 복합 인덱스와 tuple 조건을 적용하고 [`CreatedAtIdCursorCodec`](services/backend/src/main/java/com/project/farming/global/pagination/CreatedAtIdCursorCodec.java)으로 두 값을 하나의 cursor 계약으로 캡슐화했습니다.
-5. **성과**: 120,000행·offset 80,000·20 req/s 조건에서 p95 **90.55 → 13.62ms**(84.96% 감소·6.65배), p99 **98.20 → 17.64ms**(82.04% 감소·5.57배)를 기록했습니다. 원본 측정값은 [`diary-read-local.json`](infra/loadtest/baselines/diary-read-local.json)에 보관합니다.
-
-### 사례 4 — Refresh Token 원문 저장과 동시 재사용 제거
-
-1. **문제 정의**: DB에 raw Refresh Token을 저장하면 유출 시 bearer credential로 바로 악용될 수 있고, 같은 토큰의 동시 갱신 요청이 모두 성공할 가능성이 있었습니다.
-2. **원인 분석**: 복호화 가능한 값의 저장과 조회 후 갱신하는 두 단계 흐름이 각각 노출 범위와 race condition을 만들었습니다.
-3. **대안 비교**: 암호화 저장은 원문 복구가 가능해 키 관리가 추가되고, 비관적 lock은 요청 경합 동안 connection을 점유합니다. 복호화가 필요 없는 SHA-256 fingerprint와 조건부 단일 UPDATE는 노출 범위와 동시성 문제를 함께 줄입니다.
-4. **선정·실행**: [`JwtTokenFingerprint`](services/backend/src/main/java/com/project/farming/global/jwtToken/JwtTokenFingerprint.java)로 64자 fingerprint만 저장하고, 기존 fingerprint가 일치할 때만 새 값으로 바꾸는 1-row rotation을 적용했습니다.
-5. **성과**: [`RefreshTokenRotationIntegrationTest`](services/backend/src/test/java/com/project/farming/integration/RefreshTokenRotationIntegrationTest.java)가 raw token 부재와 동시 요청 결과 `(1, 0)`을 검증해 한 요청만 성공함을 보장합니다.
-
-측정은 2026-07-13 단일 WSL host의 Spring Boot·Docker MySQL 8.4 환경에서 수행했습니다. 일지 성능은 120,000행, deep offset 80,000, page size 20, 20 req/s의 교대 3회 측정 중앙값이며, 5천 건 batch 비교는 단일 진단 실행입니다. **정확한 시간과 쿼리 수는 해당 실행의 관측값이며, 테스트 assertion은 환경 독립적인 batch 수·backlog·동시성 결과와 쿼리 상한을 검증합니다. 모든 수치는 로컬 회귀 기준이지 운영 SLO가 아닙니다.**
-
-네 사례의 수정 전·후 코드, 대안별 기각 이유, 실행 순서와 검증 한계는 [GardenDoctor Backend · 문제 해결과 정량 검증](https://app.notion.com/p/39cce4340ea58185a417d1a382e0055c)에 정리했습니다. 재현 근거는 [`diary-read-local.json`](infra/loadtest/baselines/diary-read-local.json), [`DiaryNPlusOneIntegrationDiagnosticsTest`](services/backend/src/test/java/com/project/farming/integration/DiaryNPlusOneIntegrationDiagnosticsTest.java), [`UserPlantCareBatchPerformanceIntegrationDiagnosticsTest`](services/backend/src/test/java/com/project/farming/domain/userplant/service/UserPlantCareBatchPerformanceIntegrationDiagnosticsTest.java)에서 확인할 수 있습니다.
+문제 정의, 수정 전·후 코드, 대안 비교, 선택 이유, 측정 조건과 남은 한계는 [Backend Refactoring Portfolio](docs/backend-refactoring-portfolio.md)에 정리했습니다.
 
 ## 아키텍처
 
