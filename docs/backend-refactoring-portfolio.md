@@ -350,7 +350,7 @@ WHERE rt.userId = :userId
 | 영역 | 개선 전 | 개선 후 |
 | --- | --- | --- |
 | 삭제 구조 | 객체 그래프와 broad cascade로 삭제 범위가 암묵적 | main entity 관계/cascade annotation 0개, 도메인별 Soft Delete·명시 삭제 |
-| 물리 FK | long-lived 로컬 schema에 16개 잔존 | fresh schema 0개, 22개 참조 무결성 진단 |
+| 물리 FK | long-lived 로컬 schema에 16개 잔존 | fresh schema 0개, 28개 참조 무결성 진단 |
 | Diary N+1 | 6건 13 queries | 1건·30건 모두 3 queries |
 | Diary deep page HTTP | OFFSET p95/p99 90.55/98.20ms | Cursor 13.62/17.64ms |
 | 관리 알림 5,000건 DB 경로 | 55.444초 | 1.009초, 54.95배 개선 |
