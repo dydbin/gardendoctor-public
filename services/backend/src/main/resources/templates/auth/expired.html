@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>자동 로그아웃 안내</title>
+    <link rel="stylesheet" href="/css/expired.css">
+    <link rel="stylesheet" href="/css/footer.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css">
+</head>
+<body th:replace="~{layout::layout}">
+<div th:fragment="content" class="logout-container">
+    <h3 class="logout-title">🔒 자동 로그아웃 안내</h3>
+    <p class="logout-message">&nbsp;다른 기기에서 로그인되어<br> &nbsp;현재 세션이 종료되었습니다.</p>
+</div>
+</body>
+</html>

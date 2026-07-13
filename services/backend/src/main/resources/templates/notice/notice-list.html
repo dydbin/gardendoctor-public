@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>공지사항 목록 조회</title>
+    <link rel="stylesheet" href="/css/list.css">
+    <link rel="stylesheet" href="/css/footer.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css">
+</head>
+<body th:replace="~{layout::layout}">
+<div th:fragment="content" class="container">
+    <h2 class="mb-4" style="font-weight: bold;">📢 공지사항 목록</h2>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <form method="get" th:action="@{/admin/notices/search}" class="d-flex align-items-center gap-2 me-auto">
+            <div class="col-auto">
+                <select name="searchType" class="form-select">
+                    <option value="title" th:selected="${searchType == 'title'}">제목</option>
+                    <option value="content" th:selected="${searchType == 'content'}">내용</option>
+                </select>
+            </div>
+            <div class="col-auto">
+                <input type="text" name="keyword" class="form-control" placeholder="검색어 입력" th:value="${keyword}">
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">검색</button>
+            </div>
+        </form>
+
+        <a th:href="@{/admin/notices/create}" class="btn btn-warning ms-auto">📝 공지사항 등록</a>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-bordered table-hover table-striped align-middle text-center">
+            <thead class="table-light">
+            <tr>
+                <th>Notice ID</th>
+                <th>공지사항 제목</th>
+                <th>공지사항 내용</th>
+                <th>발송 여부</th>
+                <th>발송 시간</th>
+                <th>생성일</th>
+                <th>최종 수정일</th>
+            </tr>
+            </thead>
+            <tbody>
+            <th:block th:each="notice : ${noticeList}">
+                <tr>
+                    <td>[[${notice.noticeId}]]</td>
+                    <td class="text-truncate" style="max-width: 200px;">
+                        <a th:href="@{/admin/notices/{noticeId}(noticeId=${notice.noticeId})}" class="table-link">[[${notice.title}]]</a>
+                    </td>
+                    <td class="text-truncate" style="max-width: 200px;">
+                        <a th:href="@{/admin/notices/{noticeId}(noticeId=${notice.noticeId})}" class="table-link">[[${notice.content}]]</a>
+                    </td>
+                    <td>
+                        <span th:if="${notice.isSent}" class="badge bg-success">발송됨</span>
+                        <span th:if="${!notice.isSent}" class="badge bg-secondary">미발송</span>
+                    </td>
+                    <td th:text="${notice.sentAt != null ? #temporals.format(notice.sentAt, 'yyyy-MM-dd HH:mm:ss') : '없음'}"></td>
+                    <td>[[${#temporals.format(notice.createdAt, 'yyyy-MM-dd HH:mm:ss')}]]</td>
+                    <td>[[${#temporals.format(notice.updatedAt, 'yyyy-MM-dd HH:mm:ss')}]]</td>
+                </tr>
+            </th:block>
+            </tbody>
+        </table>
+    </div>
+
+    <div th:if="${noticePage != null}" class="d-flex justify-content-between align-items-center mt-3">
+        <div class="text-muted small"
+             th:text="|총 ${noticePage.totalElements}건 / ${noticePage.number + 1} / ${noticePage.totalPages == 0 ? 1 : noticePage.totalPages} 페이지|">
+        </div>
+
+        <nav th:if="${noticePage.totalPages > 1}" aria-label="공지사항 페이지 이동">
+            <ul class="pagination mb-0">
+                <li class="page-item" th:classappend="${noticePage.first} ? 'disabled' : ''">
+                    <a th:if="${!isSearch}" class="page-link"
+                       th:href="@{/admin/notices(page=${noticePage.first ? 0 : noticePage.number - 1}, size=${noticePage.size})}">이전</a>
+                    <a th:if="${isSearch}" class="page-link"
+                       th:href="@{/admin/notices/search(searchType=${searchType}, keyword=${keyword}, page=${noticePage.first ? 0 : noticePage.number - 1}, size=${noticePage.size})}">이전</a>
+                </li>
+
+                <li class="page-item"
+                    th:each="pageNumber : ${#numbers.sequence(0, noticePage.totalPages - 1)}"
+                    th:classappend="${pageNumber == noticePage.number} ? 'active' : ''">
+                    <a th:if="${!isSearch}" class="page-link"
+                       th:href="@{/admin/notices(page=${pageNumber}, size=${noticePage.size})}"
+                       th:text="${pageNumber + 1}">1</a>
+                    <a th:if="${isSearch}" class="page-link"
+                       th:href="@{/admin/notices/search(searchType=${searchType}, keyword=${keyword}, page=${pageNumber}, size=${noticePage.size})}"
+                       th:text="${pageNumber + 1}">1</a>
+                </li>
+
+                <li class="page-item" th:classappend="${noticePage.last} ? 'disabled' : ''">
+                    <a th:if="${!isSearch}" class="page-link"
+                       th:href="@{/admin/notices(page=${noticePage.last ? noticePage.number : noticePage.number + 1}, size=${noticePage.size})}">다음</a>
+                    <a th:if="${isSearch}" class="page-link"
+                       th:href="@{/admin/notices/search(searchType=${searchType}, keyword=${keyword}, page=${noticePage.last ? noticePage.number : noticePage.number + 1}, size=${noticePage.size})}">다음</a>
+                </li>
+            </ul>
+        </nav>
+    </div>
+</div>
+</body>
+</html>

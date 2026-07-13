@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>식물 목록 조회</title>
+    <link rel="stylesheet" href="/css/list.css">
+    <link rel="stylesheet" href="/css/footer.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css">
+</head>
+<body th:replace="~{layout::layout}">
+<div th:fragment="content" class="container">
+    <h2 class="mb-4" style="font-weight: bold;">🌿 식물 목록</h2>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <!-- 식물 이름(한글/영어)으로 검색 -->
+        <form method="get" th:action="@{/admin/plants/search}" class="d-flex align-items-center gap-2 me-auto">
+            <div class="col-auto">
+                <input type="text" name="keyword" class="form-control" placeholder="검색어 입력(식물 이름)"
+                       th:value="${keyword}">
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-primary">검색</button>
+            </div>
+        </form>
+
+        <a th:href="@{/admin/plants/create}" class="btn btn-success ms-auto">📝 식물 정보 등록</a>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-bordered table-hover table-striped align-middle text-center">
+            <thead class="table-light">
+            <tr>
+                <th>Plant ID</th>
+                <th>식물 사진</th>
+                <th>식물 이름</th>
+                <th>식물 영문 이름</th>
+                <th>분류</th>
+                <th>계절</th>
+            </tr>
+            </thead>
+            <tbody>
+            <th:block th:each="plant : ${plantList}">
+                <tr>
+                    <td>[[${plant.plantId}]]</td>
+                    <td>
+                        <img th:src="${plant.plantImageUrl}" alt="식물 사진" class="profile-img">
+                    </td>
+                    <td>
+                        <a th:href="@{/admin/plants/{plantId}(plantId=${plant.plantId})}" class="table-link">[[${plant.plantName}]]</a>
+                    </td>
+                    <td>
+                        <a th:href="@{/admin/plants/{plantId}(plantId=${plant.plantId})}" class="table-link">[[${plant.plantEnglishName}]]</a>
+                    </td>
+                    <td>[[${plant.species}]]</td>
+                    <td>[[${plant.season}]]</td>
+                </tr>
+            </th:block>
+            </tbody>
+        </table>
+    </div>
+
+    <nav th:if="${plantPage.totalPages > 0}" aria-label="식물 목록 페이지">
+        <ul class="pagination justify-content-center align-items-center gap-2">
+            <li class="page-item" th:if="${!plantPage.first and !isSearch}">
+                <a class="page-link" th:href="@{/admin/plants(page=${plantPage.number - 1},size=${plantPage.size})}">이전</a>
+            </li>
+            <li class="page-item" th:if="${!plantPage.first and isSearch}">
+                <a class="page-link" th:href="@{/admin/plants/search(keyword=${keyword},page=${plantPage.number - 1},size=${plantPage.size})}">이전</a>
+            </li>
+            <li class="page-item disabled" th:if="${plantPage.first}"><span class="page-link">이전</span></li>
+            <li class="page-item disabled">
+                <span class="page-link" th:text="${plantPage.number + 1 + ' / ' + plantPage.totalPages}">1 / 1</span>
+            </li>
+            <li class="page-item" th:if="${plantPage.hasNext() and !isSearch}">
+                <a class="page-link" th:href="@{/admin/plants(page=${plantPage.number + 1},size=${plantPage.size})}">다음</a>
+            </li>
+            <li class="page-item" th:if="${plantPage.hasNext() and isSearch}">
+                <a class="page-link" th:href="@{/admin/plants/search(keyword=${keyword},page=${plantPage.number + 1},size=${plantPage.size})}">다음</a>
+            </li>
+            <li class="page-item disabled" th:if="${!plantPage.hasNext()}"><span class="page-link">다음</span></li>
+        </ul>
+    </nav>
+</div>
+</body>
+</html>

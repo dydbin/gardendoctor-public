@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "environment": "single WSL host, Spring Boot, Docker MySQL 8.4",
+  "dataset": {
+    "diaryRows": 120000,
+    "deepOffset": 80000,
+    "pageSize": 20,
+    "ratePerSecond": 20,
+    "rounds": 3
+  },
+  "modes": {
+    "offset": {
+      "medianP95Ms": 90.55,
+      "medianP99Ms": 98.20
+    },
+    "cursor": {
+      "medianP95Ms": 13.62,
+      "medianP99Ms": 17.64
+    }
+  },
+  "calibration": "2026-07-13, two alternating three-round runs, six samples per mode",
+  "scope": "Local regression baseline only; not a production SLO."
+}

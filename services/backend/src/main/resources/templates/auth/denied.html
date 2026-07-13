@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>권한 없음</title>
+    <link rel="stylesheet" href="/css/denied.css">
+    <link rel="stylesheet" href="/css/footer.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css">
+</head>
+<body th:replace="~{layout::layout}">
+<div th:fragment="content" class="error-container">
+    <h3 class="error-title">⛔ 권한 없음</h3>
+    <p class="error-message">&nbsp;해당 페이지에 접근할 권한이 없습니다.</p>
+</div>
+</body>
+</html>

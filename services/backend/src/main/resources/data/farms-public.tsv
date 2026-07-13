@@ -1,0 +1,4 @@
+gardenUniqueId	operator	farmName	roadNameAddress	lotNumberAddress	facilities	contact	latitude	longitude	createdAt	updatedAt
+990000001	GardenDoctor 공개 데모	GardenDoctor 데모 텃밭 A	서울특별시 중구 세종대로 110 인근 공개 데모	N/A	공개 데모용 공용 급수대	N/A	37.5665	126.9780	20250701	20250701
+990000002	GardenDoctor 공개 데모	GardenDoctor 데모 텃밭 B	부산광역시 연제구 중앙대로 1001 인근 공개 데모	N/A	공개 데모용 농기구 보관소	N/A	35.1798	129.0750	20250701	20250701
+990000003	GardenDoctor 공개 데모	GardenDoctor 데모 텃밭 C	대전광역시 서구 둔산로 100 인근 공개 데모	N/A	공개 데모용 휴게 공간	N/A	36.3504	127.3845	20250701	20250701

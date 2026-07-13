@@ -1,0 +1,196 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "sum(rate(k6_http_reqs_total{testid=~\"$testid\"}[1m]))", "legendFormat": "k6 requests/s", "refId": "A"}],
+      "title": "k6 Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 0},
+      "id": 2,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "max(k6_http_req_duration_p95{testid=~\"$testid\"}) * 1000", "legendFormat": "p95", "refId": "A"},
+        {"expr": "max(k6_http_req_duration_p99{testid=~\"$testid\"}) * 1000", "legendFormat": "p99", "refId": "B"}
+      ],
+      "title": "k6 HTTP Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 0},
+      "id": 3,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "max(k6_http_req_failed_rate{testid=~\"$testid\"})", "legendFormat": "failure rate", "refId": "A"}],
+      "title": "k6 Failure Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 7},
+      "id": 4,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "sum by (uri) (rate(http_server_requests_seconds_count{application=\"gardendoctor-backend\"}[1m]))", "legendFormat": "{{uri}}", "refId": "A"}],
+      "title": "Spring Request Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 7},
+      "id": 5,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{application=\"gardendoctor-backend\"}[5m])))", "legendFormat": "server p95", "refId": "A"}],
+      "title": "Spring Server p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 7},
+      "id": 6,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "hikaricp_connections_active{application=\"gardendoctor-backend\"}", "legendFormat": "active", "refId": "A"},
+        {"expr": "hikaricp_connections_pending{application=\"gardendoctor-backend\"}", "legendFormat": "pending", "refId": "B"},
+        {"expr": "hikaricp_connections_idle{application=\"gardendoctor-backend\"}", "legendFormat": "idle", "refId": "C"}
+      ],
+      "title": "Hikari Pool",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 14},
+      "id": 7,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "rate(mysql_global_status_questions[1m])", "legendFormat": "queries/s", "refId": "A"}],
+      "title": "MySQL Query Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 14},
+      "id": 8,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "mysql_global_status_threads_connected", "legendFormat": "connected", "refId": "A"},
+        {"expr": "mysql_global_status_threads_running", "legendFormat": "running", "refId": "B"}
+      ],
+      "title": "MySQL Connections",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 14},
+      "id": 9,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "rate(mysql_global_status_innodb_row_lock_waits[1m])", "legendFormat": "row lock waits/s", "refId": "A"},
+        {"expr": "rate(mysql_global_status_created_tmp_disk_tables[1m])", "legendFormat": "disk temp tables/s", "refId": "B"}
+      ],
+      "title": "MySQL Contention Signals",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 21},
+      "id": 10,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "sum(jvm_memory_used_bytes{application=\"gardendoctor-backend\",area=\"heap\"})", "legendFormat": "heap used", "refId": "A"}],
+      "title": "JVM Heap Used",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 21},
+      "id": 11,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [{"expr": "rate(jvm_gc_pause_seconds_sum{application=\"gardendoctor-backend\"}[1m])", "legendFormat": "GC pause seconds/s", "refId": "A"}],
+      "title": "JVM GC Pause Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 28},
+      "id": 12,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [{"expr": "gardendoctor_fcm_outbox_backlog{application=\"gardendoctor-backend\"}", "legendFormat": "{{status}}", "refId": "A"}],
+      "title": "FCM Outbox Backlog",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 28},
+      "id": 13,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "sum by (outcome) (rate(gardendoctor_fcm_outbox_provider_results_total{application=\"gardendoctor-backend\"}[1m]))", "legendFormat": "{{outcome}}", "refId": "A"},
+        {"expr": "rate(gardendoctor_fcm_outbox_claimed_total{application=\"gardendoctor-backend\"}[1m])", "legendFormat": "claimed/s", "refId": "B"}
+      ],
+      "title": "FCM Outbox Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 28},
+      "id": 14,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(gardendoctor_fcm_outbox_provider_send_seconds_bucket{application=\"gardendoctor-backend\"}[5m])))", "legendFormat": "provider p95", "refId": "A"},
+        {"expr": "rate(gardendoctor_fcm_outbox_persistence_failures_total{application=\"gardendoctor-backend\"}[1m])", "legendFormat": "persistence failures/s", "refId": "B"}
+      ],
+      "title": "FCM Provider and Persistence",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 41,
+  "tags": ["gardendoctor", "k6", "spring", "mysql", "fcm"],
+  "templating": {
+    "list": [
+      {
+        "allValue": ".*",
+        "current": {"text": "All", "value": "$__all"},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "definition": "label_values(k6_http_reqs_total, testid)",
+        "includeAll": true,
+        "label": "k6 test run",
+        "name": "testid",
+        "query": {"query": "label_values(k6_http_reqs_total, testid)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {"from": "now-15m", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "GardenDoctor Local Performance",
+  "uid": "gardendoctor-local-performance",
+  "version": 1,
+  "weekStart": ""
+}

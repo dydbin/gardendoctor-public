@@ -1,0 +1,11 @@
+services:
+  backend:
+    environment:
+      FIREBASE_ENABLED: "true"
+      FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase-admin.json
+      APP_FCM_OUTBOX_WORKER_ENABLED: "true"
+    volumes:
+      - type: bind
+        source: ${FIREBASE_SERVICE_ACCOUNT_HOST_PATH:?FIREBASE_SERVICE_ACCOUNT_HOST_PATH must be set in infra/.env}
+        target: /run/secrets/firebase-admin.json
+        read_only: true

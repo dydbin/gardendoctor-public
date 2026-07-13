@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>사용자 목록 조회</title>
+    <link rel="stylesheet" href="/css/list.css">
+    <link rel="stylesheet" href="/css/footer.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css">
+</head>
+<body th:replace="~{layout::layout}">
+<div th:fragment="content" class="container">
+    <h2 class="mb-4" style="font-weight: bold;">👥 사용자 목록</h2>
+    <form method="get" th:action="@{/admin/users/search}" class="row g-2 align-items-center search-form">
+        <div class="col-auto">
+            <select name="searchType" class="form-select">
+                <option value="name" th:selected="${searchType == 'name'}">별명</option>
+                <option value="email" th:selected="${searchType == 'email'}">이메일</option>
+            </select>
+        </div>
+        <div class="col-auto">
+            <input type="text" name="keyword" class="form-control" placeholder="검색어 입력"
+                   th:value="${keyword}">
+        </div>
+        <div class="col-auto">
+            <button type="submit" class="btn btn-primary">검색</button>
+        </div>
+    </form>
+
+    <div class="table-responsive">
+        <table class="table table-bordered table-hover table-striped align-middle text-center">
+            <thead class="table-light">
+            <tr>
+                <th>User ID</th>
+                <th>프로필 사진</th>
+                <th>이메일</th>
+                <th>닉네임</th>
+                <th>OAuth Provider</th>
+                <th>OAuth ID</th>
+                <th>FCM Token</th>
+                <th>구독 상태</th>
+                <th>권한</th>
+            </tr>
+            </thead>
+            <tbody>
+            <th:block th:each="user : ${userList}">
+                <tr>
+                    <td>[[${user.userId}]]</td>
+                    <td>
+                        <img th:src="${user.profileImageUrl}" alt="프로필 사진" class="profile-img">
+                    </td>
+                    <td>
+                        <a th:href="@{/admin/users/{userId}(userId=${user.userId})}" class="table-link">[[${user.email}]]</a>
+                    </td>
+                    <td>
+                        <a th:href="@{/admin/users/{userId}(userId=${user.userId})}" class="table-link">[[${user.nickname}]]</a>
+                    </td>
+                    <td>[[${user.oauthProvider}]]</td>
+                    <td>[[${user.oauthId}]]</td>
+                    <td class="text-truncate" style="max-width: 200px;">[[${user.fcmToken}]]</td>
+                    <td>[[${user.subscriptionStatus}]]</td>
+                    <td>[[${user.role}]]</td>
+                </tr>
+            </th:block>
+            </tbody>
+        </table>
+    </div>
+
+    <nav th:if="${userPage.totalPages > 0}" aria-label="사용자 목록 페이지">
+        <ul class="pagination justify-content-center align-items-center gap-2">
+            <li class="page-item" th:if="${!userPage.first and !isSearch}">
+                <a class="page-link" th:href="@{/admin/users(page=${userPage.number - 1},size=${userPage.size})}">이전</a>
+            </li>
+            <li class="page-item" th:if="${!userPage.first and isSearch}">
+                <a class="page-link" th:href="@{/admin/users/search(searchType=${searchType},keyword=${keyword},page=${userPage.number - 1},size=${userPage.size})}">이전</a>
+            </li>
+            <li class="page-item disabled" th:if="${userPage.first}"><span class="page-link">이전</span></li>
+            <li class="page-item disabled">
+                <span class="page-link" th:text="${userPage.number + 1 + ' / ' + userPage.totalPages}">1 / 1</span>
+            </li>
+            <li class="page-item" th:if="${userPage.hasNext() and !isSearch}">
+                <a class="page-link" th:href="@{/admin/users(page=${userPage.number + 1},size=${userPage.size})}">다음</a>
+            </li>
+            <li class="page-item" th:if="${userPage.hasNext() and isSearch}">
+                <a class="page-link" th:href="@{/admin/users/search(searchType=${searchType},keyword=${keyword},page=${userPage.number + 1},size=${userPage.size})}">다음</a>
+            </li>
+            <li class="page-item disabled" th:if="${!userPage.hasNext()}"><span class="page-link">다음</span></li>
+        </ul>
+    </nav>
+</div>
+</body>
+</html>

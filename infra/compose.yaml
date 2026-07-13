@@ -1,0 +1,260 @@
+name: gardendoctor
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-gardendoctor}
+      MYSQL_USER: ${MYSQL_USER:-gardendoctor}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set in infra/.env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set in infra/.env}
+    ports:
+      - "127.0.0.1:${MYSQL_HOST_PORT:-3307}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  ai:
+    build:
+      context: ..
+      dockerfile: infra/docker/ai.Dockerfile
+    environment:
+      AI_DATABASE_URL: ${AI_DATABASE_URL:-sqlite:////data/feedback.db}
+      AI_CORS_ORIGINS: ${AI_CORS_ORIGINS:-http://localhost}
+      AI_MODEL_DIR: /models
+      AI_VECTOR_INDEX_DIR: /app/embeddings/faiss_index
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+    ports:
+      - "127.0.0.1:${AI_PORT:-8000}:8000"
+    volumes:
+      - ai-data:/data
+      - ${AI_MODEL_HOST_DIR:-../services/ai/ai_models}:/models:ro
+      - ${AI_EMBEDDINGS_HOST_DIR:-../services/ai/embeddings}:/app/embeddings:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ..
+      dockerfile: infra/docker/backend.Dockerfile
+    environment:
+      SERVER_PORT: 8080
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-gardendoctor}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8&rewriteBatchedStatements=true
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-gardendoctor}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD must be set in infra/.env}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: ${SPRING_JPA_HIBERNATE_DDL_AUTO:-update}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:-localhost}
+      SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-1025}
+      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME:-}
+      SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD:-}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH: ${SPRING_MAIL_PROPERTIES_MAIL_SMTP_AUTH:-false}
+      SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE: ${SPRING_MAIL_PROPERTIES_MAIL_SMTP_STARTTLS_ENABLE:-false}
+      SPRING_MAIL_CONNECTION_TIMEOUT_MS: ${SPRING_MAIL_CONNECTION_TIMEOUT_MS:-3000}
+      SPRING_MAIL_READ_TIMEOUT_MS: ${SPRING_MAIL_READ_TIMEOUT_MS:-5000}
+      SPRING_MAIL_WRITE_TIMEOUT_MS: ${SPRING_MAIL_WRITE_TIMEOUT_MS:-5000}
+      APP_USERPLANT_CARE_SCHEDULER_ENABLED: ${APP_USERPLANT_CARE_SCHEDULER_ENABLED:-false}
+      APP_USERPLANT_CARE_SCHEDULER_ZONE: ${APP_USERPLANT_CARE_SCHEDULER_ZONE:-Asia/Seoul}
+      APP_USERPLANT_CARE_SCHEDULER_RESET_CRON: "${APP_USERPLANT_CARE_SCHEDULER_RESET_CRON:-0 0 0 * * *}"
+      APP_USERPLANT_CARE_SCHEDULER_DAILY_CRON: "${APP_USERPLANT_CARE_SCHEDULER_DAILY_CRON:-0 0 9 * * *}"
+      APP_USERPLANT_CARE_SCHEDULER_INCOMPLETE_CRON: "${APP_USERPLANT_CARE_SCHEDULER_INCOMPLETE_CRON:-0 0 17 * * *}"
+      APP_USERPLANT_CARE_SCHEDULER_LOCK_WAIT_SECONDS: ${APP_USERPLANT_CARE_SCHEDULER_LOCK_WAIT_SECONDS:-0}
+      APP_USERPLANT_CARE_SCHEDULER_BATCH_SIZE: ${APP_USERPLANT_CARE_SCHEDULER_BATCH_SIZE:-1000}
+      APP_AUTH_LOGIN_RATE_LIMIT_ENABLED: ${APP_AUTH_LOGIN_RATE_LIMIT_ENABLED:-true}
+      APP_AUTH_LOGIN_RATE_LIMIT_MAX_FAILURES: ${APP_AUTH_LOGIN_RATE_LIMIT_MAX_FAILURES:-5}
+      APP_AUTH_LOGIN_RATE_LIMIT_FAILURE_WINDOW_SECONDS: ${APP_AUTH_LOGIN_RATE_LIMIT_FAILURE_WINDOW_SECONDS:-900}
+      APP_AUTH_LOGIN_RATE_LIMIT_LOCK_DURATION_SECONDS: ${APP_AUTH_LOGIN_RATE_LIMIT_LOCK_DURATION_SECONDS:-900}
+      APP_AUTH_PASSWORD_RESET_TOKEN_TTL_SECONDS: ${APP_AUTH_PASSWORD_RESET_TOKEN_TTL_SECONDS:-900}
+      APP_AUTH_PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS: ${APP_AUTH_PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS:-60}
+      APP_AUTH_PASSWORD_RESET_CONFIRM_URL: ${APP_AUTH_PASSWORD_RESET_CONFIRM_URL:-http://localhost:3000/reset-password}
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_ID: ${SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_ID:?Google OAuth client id must be set in infra/.env}
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET: ${SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_GOOGLE_CLIENT_SECRET:?Google OAuth client secret must be set in infra/.env}
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_KAKAO_CLIENT_ID: ${SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_KAKAO_CLIENT_ID:?Kakao OAuth client id must be set in infra/.env}
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_KAKAO_CLIENT_SECRET: ${SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_KAKAO_CLIENT_SECRET:?Kakao OAuth client secret must be set in infra/.env}
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_NAVER_CLIENT_ID: ${SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_NAVER_CLIENT_ID:?Naver OAuth client id must be set in infra/.env}
+      SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_NAVER_CLIENT_SECRET: ${SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_NAVER_CLIENT_SECRET:?Naver OAuth client secret must be set in infra/.env}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET must be set in infra/.env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET must be set in infra/.env}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-3600000}
+      JWT_REFRESH_EXPIRATION: ${JWT_REFRESH_EXPIRATION:-1209600000}
+      PYTHON_SERVER_URL: http://ai:8000
+      PYTHON_CONNECT_TIMEOUT_MS: ${PYTHON_CONNECT_TIMEOUT_MS:-2000}
+      PYTHON_RESPONSE_TIMEOUT_MS: ${PYTHON_RESPONSE_TIMEOUT_MS:-15000}
+      PYTHON_REQUEST_TIMEOUT_MS: ${PYTHON_REQUEST_TIMEOUT_MS:-15000}
+      APP_CHAT_DELETION_WORKER_ENABLED: ${APP_CHAT_DELETION_WORKER_ENABLED:-false}
+      APP_CHAT_DELETION_WORKER_FIXED_DELAY_MS: ${APP_CHAT_DELETION_WORKER_FIXED_DELAY_MS:-10000}
+      APP_CHAT_DELETION_WORKER_BATCH_SIZE: ${APP_CHAT_DELETION_WORKER_BATCH_SIZE:-50}
+      APP_CHAT_DELETION_WORKER_MAX_ATTEMPTS: ${APP_CHAT_DELETION_WORKER_MAX_ATTEMPTS:-5}
+      APP_CHAT_DELETION_WORKER_LOCK_TIMEOUT_MINUTES: ${APP_CHAT_DELETION_WORKER_LOCK_TIMEOUT_MINUTES:-10}
+      APP_PHOTO_ANALYSIS_REQUEST_COOLDOWN_SECONDS: ${APP_PHOTO_ANALYSIS_REQUEST_COOLDOWN_SECONDS:-10}
+      CLOUD_AWS_CREDENTIALS_ACCESS_KEY: ${CLOUD_AWS_CREDENTIALS_ACCESS_KEY:?AWS access key must be set in infra/.env}
+      CLOUD_AWS_CREDENTIALS_SECRET_KEY: ${CLOUD_AWS_CREDENTIALS_SECRET_KEY:?AWS secret key must be set in infra/.env}
+      CLOUD_AWS_REGION_STATIC: ${CLOUD_AWS_REGION_STATIC:-ap-northeast-2}
+      CLOUD_AWS_S3_BUCKET: ${CLOUD_AWS_S3_BUCKET:-gardendoctor-local}
+      FIREBASE_ENABLED: ${FIREBASE_ENABLED:-false}
+      FIREBASE_SERVICE_ACCOUNT_PATH: ${FIREBASE_SERVICE_ACCOUNT_PATH:-}
+      APP_FCM_OUTBOX_WORKER_ENABLED: ${APP_FCM_OUTBOX_WORKER_ENABLED:-false}
+      APP_FCM_OUTBOX_WORKER_FIXED_DELAY_MS: ${APP_FCM_OUTBOX_WORKER_FIXED_DELAY_MS:-1000}
+      APP_FCM_OUTBOX_WORKER_BATCH_SIZE: ${APP_FCM_OUTBOX_WORKER_BATCH_SIZE:-500}
+      APP_FCM_OUTBOX_WORKER_MAX_BATCHES_PER_RUN: ${APP_FCM_OUTBOX_WORKER_MAX_BATCHES_PER_RUN:-20}
+      APP_FCM_OUTBOX_WORKER_MAX_ATTEMPTS: ${APP_FCM_OUTBOX_WORKER_MAX_ATTEMPTS:-5}
+      APP_FCM_OUTBOX_WORKER_LOCK_TIMEOUT_MINUTES: ${APP_FCM_OUTBOX_WORKER_LOCK_TIMEOUT_MINUTES:-10}
+      KAKAO_API_KEY: ${KAKAO_API_KEY:?KAKAO_API_KEY must be set in infra/.env}
+      APP_INIT_SEED_DATA_ENABLED: ${APP_INIT_SEED_DATA_ENABLED:-false}
+      APP_SCHEMA_BOOTSTRAP_ENABLED: ${APP_SCHEMA_BOOTSTRAP_ENABLED:-false}
+      APP_INTEGRITY_IDENTIFIER_REFERENCE_HEALTH_ENABLED: ${APP_INTEGRITY_IDENTIFIER_REFERENCE_HEALTH_ENABLED:-false}
+      APP_INTEGRITY_IDENTIFIER_REFERENCE_MONITOR_ENABLED: ${APP_INTEGRITY_IDENTIFIER_REFERENCE_MONITOR_ENABLED:-false}
+      APP_INTEGRITY_IDENTIFIER_REFERENCE_MONITOR_CRON: "${APP_INTEGRITY_IDENTIFIER_REFERENCE_MONITOR_CRON:-0 0 3 * * *}"
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: ${MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE:-health,info,prometheus}
+      MANAGEMENT_HEALTH_PROBES_ENABLED: ${MANAGEMENT_HEALTH_PROBES_ENABLED:-true}
+      MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS: ${MANAGEMENT_METRICS_DISTRIBUTION_PERCENTILES_HISTOGRAM_HTTP_SERVER_REQUESTS:-true}
+      MANAGEMENT_METRICS_TAGS_APPLICATION: ${MANAGEMENT_METRICS_TAGS_APPLICATION:-gardendoctor-backend}
+      MANAGEMENT_METRICS_TAGS_ENVIRONMENT: ${MANAGEMENT_METRICS_TAGS_ENVIRONMENT:-local-compose}
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/actuator/health/readiness >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 40s
+    restart: unless-stopped
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.18.0
+    profiles: ["observability", "loadtest"]
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQL_EXPORTER_PASSWORD:?MYSQL_EXPORTER_PASSWORD must be set in infra/.env}
+    command:
+      - --mysqld.address=mysql:3306
+      - --mysqld.username=${MYSQL_EXPORTER_USER:-gardendoctor_exporter}
+      - --collect.info_schema.innodb_metrics
+      - --collect.perf_schema.eventsstatements
+      - --collect.perf_schema.tableiowaits
+      - --collect.perf_schema.tablelocks
+      - --exporter.enable_lock_wait_timeout
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.12.0
+    profiles: ["observability", "loadtest"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-remote-write-receiver
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+    volumes:
+      - ./config/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    depends_on:
+      backend:
+        condition: service_healthy
+      mysqld-exporter:
+        condition: service_started
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.0.2
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set in infra/.env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    ports:
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3001}:3000"
+    volumes:
+      - ./config/observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./config/observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./config/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+    restart: unless-stopped
+
+  k6:
+    image: grafana/k6:2.0.0
+    profiles: ["loadtest"]
+    working_dir: /scripts
+    environment:
+      PERF_BASE_URL: ${PERF_BASE_URL:-http://backend:8080}
+      PERF_TEST_RUN_ID: ${PERF_TEST_RUN_ID:-local}
+      PERF_RATE: ${PERF_RATE:-20}
+      PERF_DURATION: ${PERF_DURATION:-30s}
+      PERF_PRE_ALLOCATED_VUS: ${PERF_PRE_ALLOCATED_VUS:-20}
+      PERF_MAX_VUS: ${PERF_MAX_VUS:-100}
+      PERF_CURSOR_P95_MS: ${PERF_CURSOR_P95_MS:-100}
+      PERF_CURSOR_P99_MS: ${PERF_CURSOR_P99_MS:-200}
+      PERF_OFFSET_P95_MS: ${PERF_OFFSET_P95_MS:-250}
+      PERF_OFFSET_P99_MS: ${PERF_OFFSET_P99_MS:-500}
+      PERF_SPIKE_RATE: ${PERF_SPIKE_RATE:-100}
+      PERF_SOAK_DURATION: ${PERF_SOAK_DURATION:-10m}
+      PERF_SATURATION_RATE: ${PERF_SATURATION_RATE:-1000}
+      PERF_USER_EMAIL: ${PERF_USER_EMAIL:-}
+      PERF_USER_PASSWORD: ${PERF_USER_PASSWORD:-}
+      PERF_DEEP_PAGE: ${PERF_DEEP_PAGE:-4000}
+      PERF_PAGE_SIZE: ${PERF_PAGE_SIZE:-20}
+      PERF_CURSOR: ${PERF_CURSOR:-}
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+      K6_PROMETHEUS_RW_TREND_STATS: p(50),p(90),p(95),p(99),max
+      K6_PROMETHEUS_RW_PUSH_INTERVAL: 1s
+      K6_PROMETHEUS_RW_STALE_MARKERS: "false"
+    volumes:
+      - ./loadtest/k6:/scripts:ro
+      - ./.runtime/loadtest:/results
+    depends_on:
+      backend:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+
+volumes:
+  mysql-data:
+  redis-data:
+  ai-data:
+  prometheus-data:
+  grafana-data:

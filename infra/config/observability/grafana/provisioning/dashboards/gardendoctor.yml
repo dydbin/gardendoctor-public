@@ -1,0 +1,12 @@
+# Managed by infra/compose.yaml.
+apiVersion: 1
+
+providers:
+  - name: GardenDoctor local performance
+    orgId: 1
+    folder: GardenDoctor
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards

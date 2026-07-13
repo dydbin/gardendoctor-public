@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <title>텃밭 지도 화면</title>
+    <link rel="stylesheet" href="/css/map.css">
+    <link rel="stylesheet" href="/css/footer.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css">
+</head>
+<body th:replace="~{layout::layout}">
+<div th:fragment="content">
+    <br>
+    <div class="map-container">
+        <div id="map"></div>
+        <div class="farm-list">
+            <div class="farm-list-header d-flex justify-content-between align-items-center">
+                <div>텃밭 목록 <span id="farm-count">(0)</span></div>
+                <button class="btn btn-primary btn-sm" onclick="moveToCurrentLocation()">
+                    현재 위치로 이동
+                </button>
+            </div>
+            <div class="farm-list-body">
+                <ul id="farm-items"></ul>
+            </div>
+        </div>
+    </div>
+    <script th:src="'//dapi.kakao.com/v2/maps/sdk.js?appkey=' + ${kakaoApiKey}"></script>
+    <script>
+        // 지도를 담을 영역의 DOM 레퍼런스
+        var mapContainer = document.getElementById('map');
+
+        // 지도 생성 시 필요한 기본 옵션
+        var mapOptions = {
+            // 지도의 중심 좌표 (반드시 필요)
+            center: new kakao.maps.LatLng(37.5665, 126.9780), // 서울시청 위치
+            level: 8 // 지도의 레벨 (확대, 축소 정도)
+        };
+
+        // 지도 생성
+        var map = new kakao.maps.Map(mapContainer, mapOptions);
+
+        // 줌 컨트롤 생성
+        var zoomControl = new kakao.maps.ZoomControl();
+        map.addControl(zoomControl, kakao.maps.ControlPosition.RIGHT);
+
+        // 텃밭 마커 이미지 설정
+        var imageSrc = 'https://aws-bucket-farming-family-25078.s3.ap-northeast-2.amazonaws.com/farmMarker.png';
+        var imageSize = new kakao.maps.Size(40, 45);
+        var imageOption = { offset: new kakao.maps.Point(20, 45) };
+        // 마커의 좌표와 일치시킬 이미지 안에서의 좌표를 설정
+        var markerImage = new kakao.maps.MarkerImage(imageSrc, imageSize, imageOption);
+
+        // 현재 위치 주변 텃밭 정보 조회 (마커, 인포윈도우 생성)
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(onSuccessGeolocation, function(error) {
+                alert('위치 정보를 가져올 수 없습니다: ' + error.message);
+            });
+        } else {
+            alert("이 브라우저에서는 위치 정보가 지원되지 않습니다.");
+        }
+
+        // 현재 위치를 가져오고, 주변 텃밭의 정보를 불러와서 마커와 인포윈도우를 생성하는 함수
+        function onSuccessGeolocation(position) {
+            const lat = position.coords.latitude; // 위도
+            const lng = position.coords.longitude; // 경도
+            let radius = 20; // 반경
+
+            // 현재 위치
+            var currentPosition = new kakao.maps.LatLng(lat, lng);
+
+            // 현재 위치 마커 생성
+            var marker = new kakao.maps.Marker({
+                map: map,
+                position: currentPosition
+            });
+
+            // 현재 위치로 지도 중심 이동
+            map.setCenter(currentPosition);
+
+            // 주변 텃밭 정보 가져오기
+            fetch(`http://localhost:8080/api/farms/nearby?latitude=${lat}&longitude=${lng}&radius=${radius}`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('텃밭 목록:', data);
+                // 주변 텃밭 마커와 인포윈도우 생성
+                showFarms(data);
+            })
+            .catch(err => {
+                console.error('에러:', err);
+            });
+        }
+
+        let infoWindowList = [];
+
+        // 주변 텃밭의 마커와 인포윈도우를 생성하는 함수
+        function showFarms(data) {
+            const farmListEl = document.getElementById("farm-items");
+            const farmCountEl = document.getElementById("farm-count");
+
+            farmListEl.innerHTML = "";
+            infoWindowList = [];
+
+            farmCountEl.textContent = `(${data.length})`;
+
+            data.forEach((farm, idx) => {
+                const { farmId, operator, farmName,
+                        lotNumberAddress, facilities, contact,
+                        latitude, longitude, available, farmImageUrl } = farm;
+
+                // 텃밭 위치
+                var farmPosition = new kakao.maps.LatLng(latitude, longitude);
+
+                // 텃밭 마커 생성
+                var farmMarker = new kakao.maps.Marker({
+                    map: map,
+                    position: farmPosition,
+                    image: markerImage,
+                    clickable: true
+                });
+                // clickable: 마커를 클릭했을 때 지도의 클릭 이벤트가 발생하지 않도록 설정
+
+                var iwContent =
+                    `<div class="info-window">
+                        <img src="${farm.farmImageUrl}" alt="텃밭 사진">
+                        <div class="content">
+                            <div class="title">${farm.farmName}</div>
+                            <div class="mb-2 d-flex">
+                                <div class="label-col">운영자</div>
+                                <div class="value-col">${farm.operator}</div>
+                            </div>
+                            <div class="mb-2 d-flex">
+                                <div class="label-col">주소</div>
+                                <div class="value-col">${farm.lotNumberAddress}</div>
+                            </div>
+                            <div class="mb-2 d-flex">
+                                <div class="label-col">시설</div>
+                                <div class="value-col">${farm.facilities}</div>
+                            </div>
+                            <div class="mb-2 d-flex">
+                                <div class="label-col">신청 방법</div>
+                                <div class="value-col">${farm.contact}</div>
+                            </div>
+                            <div class="mb-2 d-flex">
+                                <div class="label-col">운영 여부</div>
+                                <div class="value-col">
+                                    ${farm.available
+                                        ? '<span class="badge bg-success">운영중</span>'
+                                        : '<span class="badge bg-secondary">미운영</span>'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>`
+
+                // 인포윈도우 생성
+                var infoWindow = new kakao.maps.InfoWindow({
+                    //position: farmPosition,
+                    content: iwContent,
+                    removable : true
+                });
+                infoWindowList.push(infoWindow);
+                // removable: ture로 설정하면 인포윈도우를 닫을 수 있는 x버튼 표시
+
+                // 마커 클릭 시 인포윈도우 표시
+                kakao.maps.event.addListener(farmMarker, 'click', function() {
+                    if (infoWindow.getMap()) {
+                        infoWindow.close();
+                    }
+                    else {
+                        infoWindowList.forEach(iw => iw.close());
+                        // 마커 위에 인포윈도우 표시
+                        infoWindow.open(map, farmMarker);
+                    }
+                });
+
+                // 주변 텃밭 리스트
+                const li = document.createElement("li");
+                li.innerHTML = `
+                    <div class="fw-bold">${farmName}</div>
+                    <div class="text-muted" style="font-size:12px">${lotNumberAddress}</div>
+                `;
+                li.addEventListener("click", () => {
+                    infoWindowList.forEach(iw => iw.close());
+                    map.setCenter(farmPosition);
+                    infoWindow.open(map, farmMarker);
+                });
+                farmListEl.appendChild(li);
+            });
+        }
+
+        function moveToCurrentLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(function(position) {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    const locPosition = new kakao.maps.LatLng(lat, lon);
+
+                    map.setCenter(locPosition);
+                    map.setLevel(8);
+                }, function() {
+                    alert("위치를 가져올 수 없습니다.");
+                });
+            } else {
+                alert("이 브라우저는 위치 서비스를 지원하지 않습니다.");
+            }
+        }
+    </script>
+</div>
+</body>
+</html>

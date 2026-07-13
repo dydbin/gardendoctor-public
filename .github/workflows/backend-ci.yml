@@ -1,0 +1,32 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - services/backend/**
+      - infra/**
+      - .github/workflows/backend-ci.yml
+  push:
+    branches: [main]
+    paths:
+      - services/backend/**
+      - infra/**
+      - .github/workflows/backend-ci.yml
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    container: gradle:8.14.3-jdk17
+    defaults:
+      run:
+        working-directory: services/backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Verify Java
+        run: java -version
+      - name: Run unit and source diagnostics
+        run: ./gradlew test portfolioDiagnostics --no-daemon

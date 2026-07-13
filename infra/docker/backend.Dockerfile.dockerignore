@@ -1,0 +1,12 @@
+*
+!services/
+!services/backend/
+!services/backend/build.gradle
+!services/backend/settings.gradle
+!services/backend/src/
+!services/backend/src/main/
+!services/backend/src/main/**
+!infra/
+!infra/config/
+!infra/config/backend/
+!infra/config/backend/**

@@ -1,0 +1,23 @@
+body {
+    background: #eef1f5;
+}
+
+.login-container {
+    max-width: 400px;
+    margin: 80px auto;
+    padding: 30px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+}
+
+.form-control:focus {
+    box-shadow: none;
+    border-color: #86b7fe;
+}
+
+.error-message {
+    color: #dc3545;
+    font-size: 0.9rem;
+    margin-top: 10px;
+}

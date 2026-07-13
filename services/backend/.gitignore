@@ -1,0 +1,76 @@
+HELP.md
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+# Java build
+/target/
+out/
+
+# IDE
+.idea/
+*.iml
+*.iws
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Python test/cache artifacts
+__pycache__/
+*.py[cod]
+
+# Local Codex task notes
+/docs/
+
+# Local configuration
+/application.properties
+/application.yml
+/application-local.properties
+/application-local.yml
+/src/main/resources/application.properties
+/src/main/resources/application-*.properties
+
+# 환경 변수
+.env.development
+.env
+.env.local
+
+
+# Firebase Service Account Key
+farming-family-828cf-firebase-adminsdk.json

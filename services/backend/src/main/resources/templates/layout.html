@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>텃밭 닥터</title>
+</head>
+<body th:fragment="layout">
+    <header>
+        <div th:replace="~{top_menu :: top_menu}"></div>
+    </header>
+    <main>
+        <div th:replace="~{::content}"></div>
+    </main>
+    <footer>
+        <div th:replace="~{footer :: footer}"></div>
+    </footer>
+</body>
+</html>

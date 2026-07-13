@@ -1,0 +1,80 @@
+# Local environment and editor state
+infra/.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+.DS_Store
+.idea/
+.vscode/
+*.iml
+
+# Flutter / Android / Apple build state
+apps/mobile/.dart_tool/
+apps/mobile/.flutter-plugins
+apps/mobile/.flutter-plugins-dependencies
+apps/mobile/.pub-cache/
+apps/mobile/build/
+apps/mobile/**/build/
+apps/mobile/android/.gradle/
+apps/mobile/android/local.properties
+apps/mobile/ios/Pods/
+apps/mobile/macos/Pods/
+
+# Generated infrastructure projections and runtime results
+infra/generated/
+infra/.runtime/
+
+# Private mobile platform configuration
+apps/mobile/android/app/google-services.json
+apps/mobile/android/app/client_secret_*.json
+apps/mobile/ios/Runner/GoogleService-Info.plist
+apps/mobile/macos/Runner/GoogleService-Info.plist
+apps/mobile/lib/firebase_options.dart
+apps/mobile/firebase.json
+apps/mobile/.firebaserc
+apps/mobile/.firebase/
+apps/mobile/**/key.properties
+apps/mobile/**/*.jks
+apps/mobile/**/*.keystore
+
+# Python runtime state
+**/__pycache__/
+**/*.py[cod]
+services/ai/**/__pycache__/
+services/ai/**/*.py[cod]
+services/ai/.venv/
+services/ai/venv/
+services/ai/ai-env/
+
+# Private or separately distributed AI artifacts
+services/ai/ai_models/*
+!services/ai/ai_models/README.md
+services/ai/embeddings/docs/*
+!services/ai/embeddings/docs/README.md
+services/ai/embeddings/faiss_index/
+services/ai/embeddings/downloads/
+services/ai/test_data/
+services/ai/data/
+services/ai/uploaded_images/
+services/ai/retraining_pool/
+services/ai/**/*.pt
+services/ai/**/*.pth
+services/ai/**/*.db
+services/ai/**/*.sqlite
+services/ai/**/*.sqlite3
+
+# Backend runtime, IDE, and generated local configuration
+services/backend/.gradle/
+services/backend/build/
+services/backend/bin/
+services/backend/.idea/
+services/backend/*.iml
+services/backend/src/main/resources/application.properties
+services/backend/src/main/resources/application-*.properties
+services/backend/docs/
+services/backend/src/main/resources/data/farmList.xlsx
+services/backend/src/main/resources/data/farmList2.xls
+services/backend/**/*firebase*admin*.json
+services/backend/**/*service-account*.json
