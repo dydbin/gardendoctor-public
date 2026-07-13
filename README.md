@@ -21,7 +21,7 @@
 <p align="center">
   <a href="#프로젝트-개요">프로젝트 개요</a> ·
   <a href="#담당-개발-범위">담당 범위</a> ·
-  <a href="#backend-문제-해결과-정량-검증">문제 해결</a> ·
+  <a href="#리팩토링-및-문제-해결">문제 해결</a> ·
   <a href="#아키텍처">아키텍처</a> ·
   <a href="#빠른-시작">빠른 시작</a> ·
   <a href="#검증">검증</a>
@@ -68,6 +68,9 @@ GardenDoctor(텃밭닥터)는 도시농업 입문자가 전문 지식 부족 때
 | 사용자 경험 | 이메일·소셜 로그인, 프로필, 알림함 | Mobile · Backend · OAuth/FCM |
 | 운영 지원 | 헬스체크, 메트릭, 대시보드, 부하 테스트 | Actuator · Prometheus · Grafana · k6 |
 
+## 최종 산출물
+https://github.com/KSEB-AI-3
+
 ## 리팩토링 및 문제 해결
 
 이 리팩토링의 1차 목표는 **생명주기가 다른 도메인을 강하게 묶고 있던 JPA 연관관계와 물리 FK를 정리하고, broad cascade에 의한 예측하지 못한 Hard Delete를 제거하는 것**이었습니다.
@@ -75,6 +78,8 @@ GardenDoctor(텃밭닥터)는 도시농업 입문자가 전문 지식 부족 때
 연결 row 삭제가 부모 Diary와 ImageFile까지 전파되는 문제를 재현한 뒤, cross-aggregate 객체 관계를 식별자 참조로 바꾸고 사용자·UserPlant·Plant·Farm에는 도메인별 Soft Delete를 적용했습니다. 이 과정에서 ORM과 DB가 맡던 정합성 책임이 애플리케이션으로 이동했고, 이를 참조 검증, 무결성 진단, shared/exclusive row lock으로 보완했습니다.
 
 연관관계를 제거하는 과정에서 DTO의 LAZY 객체 그래프 순회가 N+1의 원인임을 확인했습니다. 이후 필요한 데이터를 명시적인 batch read model로 조회하도록 변경했습니다. 이를 batch read model로 바꾼 뒤에는 무제한 목록과 deep OFFSET, 대량 알림의 단건 transaction과 외부 FCM 장애 경계, Refresh Token 동시 재사용 문제까지 순서대로 확장해 해결했습니다.
+
+> **용어 구분:** 이 프로젝트는 Spring Batch 프레임워크를 사용하지 않습니다. 대량 알림은 Spring `@Scheduled`, 수동 keyset chunk, `JdbcTemplate.batchUpdate`, Transactional Outbox로 구현했습니다. 아래의 “batch”는 JDBC batch 또는 일정 크기로 나눈 묶음 처리를 의미합니다.
 
 ```mermaid
 flowchart LR
@@ -88,31 +93,121 @@ flowchart LR
     G --> H
 ```
 
-### 정량적 성능 테스트 요약
+### 대표 문제 해결 — 식물 관리 알림의 I/O 증폭 제거
 
-| 리팩토링 흐름 | 최종 선택 | 검증 결과 |
+#### 1. 문제 정의
+
+GardenDoctor는 매일 정해진 시각에 사용자의 식물 상태를 확인하고 물주기·가지치기·영양제 작업을 개인별 알림으로 생성합니다. 초기 구현은 기능적으로 동작했지만, 처리 대상이 늘면 한 건의 알림을 만들기 위한 DB 조회·SQL 실행·transaction·외부 FCM 호출이 사용자 수에 비례해 반복되는 구조였습니다.
+
+```text
+Scheduler
+  -> DATEDIFF 조건으로 대상 UserPlant 조회
+  -> OFFSET으로 다음 페이지 이동
+  -> 사용자별 User 재조회
+  -> Notification INSERT
+  -> Outbox 조회·INSERT
+  -> FCM 단건 전송
+```
+
+병목은 네트워크 I/O와 디스크 I/O 중 하나만 느린 문제가 아니었습니다. 작은 DB 왕복과 transaction, 외부 I/O를 사용자마다 반복해 전체 비용이 증폭되는 구조가 핵심 원인이었습니다. 이를 확인하기 위해 5,000건의 저장 경로를 전후 비교하고, 최종 구조는 100,000명의 개인화 알림 생성과 Outbox 소진까지 확장해 검증했습니다.
+
+#### 2. 원인 분석
+
+| 원인 | 기존 구조의 문제 |
+| --- | --- |
+| 계산형 조회 조건 | `DATEDIFF(CURRENT_DATE, last_date)`를 row마다 계산하여 일반 B-Tree 인덱스의 range scan을 활용하기 어려움 |
+| OFFSET 페이지 이동 | 실행 중 탈퇴나 알림 설정 변경으로 대상 집합이 달라지면 뒤 페이지가 이동해 중복·누락 가능 |
+| 사용자별 transaction | User 조회, Notification·Outbox 저장과 commit 횟수가 사용자 수에 비례해 증가 |
+| JPA 단건 저장 | `saveAll()`도 IDENTITY 키 전략에서는 JDBC batch가 자동 보장되지 않고 entity materialization 비용이 남음 |
+| 식물 단위 처리 | 한 사용자가 여러 식물을 보유하면 같은 사용자에게 관리 알림이 여러 건 생성될 수 있음 |
+| 외부 호출 결합 | FCM 응답을 기다리는 동안 DB connection을 점유하고, DB commit과 푸시 성공 사이의 부분 실패를 복구하기 어려움 |
+| 다중 인스턴스 | 각 인스턴스의 `@Scheduled`가 동시에 실행되면 같은 알림을 중복 생성할 수 있음 |
+
+5,000건 비교에서는 외부 FCM을 제외하고 DB 저장 경로만 측정했습니다. 개선 전 경로는 미리 선정한 사용자 ID마다 User를 다시 조회하고 Notification과 Outbox를 저장해 총 5,000개 transaction을 실행했습니다. 따라서 이 비교는 “전체 알림 서비스의 최대 처리량”이 아니라 단건 transaction 반복을 JDBC batch로 바꾼 효과를 확인하는 진단입니다.
+
+#### 3. 대안 도출 및 비교
+
+| 대안 | 장점 | 한계 | 판단 |
+| --- | --- | --- | --- |
+| OFFSET + 사용자별 transaction 유지 | 변경 범위가 작음 | deep OFFSET, 대상 이동, SQL·commit 선형 증가 | 제외 |
+| `@Async`로 FCM 호출 | scheduler thread와 외부 호출 분리 | 프로세스 종료 시 작업 유실, 재시도·처리 이력 부재 | 제외 |
+| FCM Topic | 서버 fan-out 비용 감소 | 사용자별 식물명·작업 개인화와 수신자별 결과 추적 불가 | 공통 공지에만 적합 |
+| Spring Batch | JobRepository, checkpoint, restart, retry·skip 제공 | FCM 중복과 DB·외부 시스템 정합성을 자동 해결하지 않으며 현재 범위에서는 운영 복잡도 증가 | checkpoint 요구 전까지 보류 |
+| Kafka·RabbitMQ·SQS | backpressure, DLQ와 worker 수평 확장 | broker 운영과 DB-broker 사이의 추가 정합성 문제 | 현재 범위에서는 보류 |
+| MySQL Outbox + keyset + JDBC batch | 기존 인프라 활용, 개인화·재시도·처리 결과 관리 가능 | DB queue와 polling worker 운영 필요 | **선택** |
+
+Spring Batch를 도입하지 않은 이유는 당시 핵심 문제가 프레임워크 부재가 아니라 조회 방식, DB I/O 횟수, transaction 경계와 FCM 분리에 있었기 때문입니다. 이후 실패 지점 재시작과 영속 checkpoint 요구가 커지면 producer를 Spring Batch Job/Step으로 전환할 수 있지만, 외부 전송의 원자성과 멱등성을 위한 Outbox와 unique key는 그대로 필요합니다.
+
+#### 4. 최종 해결책과 선택 이유
+
+```mermaid
+flowchart LR
+    S[Spring @Scheduled] --> L[MySQL Named Lock]
+    L --> R[user_id Keyset Reader<br/>1,000명]
+    R --> A[사용자별 식물 작업 집계]
+    A --> W[Notification·Outbox<br/>JDBC batchUpdate]
+    W --> DB[(MySQL)]
+    DB --> C[Outbox Claim<br/>최대 500건]
+    C --> F[FCM sendBatch<br/>transaction 밖]
+    F --> U[SENT·PENDING·FAILED<br/>JDBC batch update]
+```
+
+- 관리 예정일을 `next_watering_date`, `next_pruning_date`, `next_fertilizing_date`로 미리 계산해 각 `next_*_date <= :executionDate` 조건을 인덱스로 탐색할 수 있도록 변경했습니다.
+- 사용자 ID를 기준으로 1,000명씩 keyset 조회해 OFFSET 이동과 대상 변경에 따른 누락 위험을 제거했습니다.
+- 한 사용자의 여러 식물 작업을 개인화 payload 하나로 집계했습니다.
+- Notification과 Outbox를 같은 transaction에서 JDBC batch로 저장했습니다.
+- FCM 호출은 DB transaction 밖의 별도 worker에서 최대 500건씩 처리합니다.
+- 일시 오류는 지수 백오프로 재시도하고, 잘못된 token 같은 영구 오류는 즉시 실패 처리합니다.
+- MySQL Named Lock은 여러 scheduler의 동시 실행 시도를 줄이고 `finally`에서 해제합니다. `event_key` unique 제약은 재시작과 다중 실행에서도 실제 중복 저장을 막습니다.
+- 정확성의 최종 방어선은 Named Lock이 아니라 DB unique key입니다.
+
+Named Lock은 InnoDB의 record lock·gap lock·next-key lock과 다른 **세션 단위 advisory lock**입니다. 작업 동안 별도 DB connection 하나를 점유하는 비용이 있으므로 짧은 일일 job의 실행 조정에만 사용했고, connection pool에는 batch transaction용 여유를 남겼습니다. 성능 진단은 `UserPlantCareJobService`를 직접 실행하므로 이 Named Lock connection은 측정값에 포함하지 않았습니다.
+
+#### 5. 실행 및 성과
+
+각 수치는 포함 범위와 transaction 수가 다르므로 동일한 데이터 크기 비교로 해석하지 않았습니다. 시간은 읽기 쉬운 밀리초 단위로 통일하고 처리량을 함께 표기했습니다.
+
+| 측정 | 포함 범위 | 결과 | 처리량 |
+| --- | --- | ---: | ---: |
+| 5,000건 개선 전 DB 경로 | 선정된 ID를 사용자별로 다시 조회하고 Notification·Outbox 저장, 5,000 transaction | **55,444ms** | 약 90건/초 |
+| 5,000건 개선 후 DB 경로 | 같은 대상과 payload를 1,000건씩 JDBC batch 저장, 5 transaction | **1,009ms, 54.95배 단축** | 약 4,955건/초 |
+| 100,000건 producer | keyset 조회, 작업 조회·집계, Notification·Outbox 생성, 100 chunk commit | **9,609ms** | 약 10,407건/초 |
+| 100,000건 Outbox drain | 500건씩 200회 claim, mock FCM 결과, 완료 상태 갱신 | **24,033ms** | 약 4,161건/초 |
+| 전체 DB pipeline | producer와 drain 순차 합계 | **33,642ms, backlog 0** | 약 2,972건/초 |
+
+Outbox drain은 200개 batch마다 claim과 completion을 별도 transaction으로 처리하고 수신 자격·상태·재시도 정보까지 갱신하므로 producer보다 처리량이 낮습니다. 과거 로컬 실행에서 관측한 294ms 등은 실행 시점과 측정 경로가 다른 값이므로 최종 결과와 섞지 않았습니다.
+
+5,000건 비교는 `executeBatch()` 호출만이 아니라 transaction commit까지 포함합니다. 다만 개선 전 경로를 먼저 실행한 단일 로컬 관측이므로 JIT, MySQL buffer pool과 host 부하의 영향을 받을 수 있습니다. 따라서 54.95배는 운영 처리량 보장이 아니라 해당 조건에서 관측한 개선 폭입니다.
+
+100,000건 drain의 FCM은 in-memory mock입니다. 실제 Firebase network, quota, 429 응답과 재시도 지연은 포함하지 않습니다. 정확한 소요 시간을 테스트의 고정 합격 기준으로 사용하지 않고 다음 불변 조건을 회귀 테스트로 강제했습니다.
+
+- 100,000명 모두 Notification·Outbox 생성
+- producer 100개 chunk 처리
+- Outbox 500건씩 200개 batch 처리
+- 처리 후 `PENDING` backlog 0
+- producer와 drain 각각 2분 미만
+
+관련 구현은 [UserPlantCareJobService](services/backend/src/main/java/com/project/farming/domain/userplant/service/UserPlantCareJobService.java), [CareNotificationBatchWriter](services/backend/src/main/java/com/project/farming/domain/userplant/service/CareNotificationBatchWriter.java), [FcmOutboxProcessor](services/backend/src/main/java/com/project/farming/domain/notification/outbox/FcmOutboxProcessor.java), [알림 성능 통합 진단](services/backend/src/test/java/com/project/farming/domain/userplant/service/UserPlantCareBatchPerformanceIntegrationDiagnosticsTest.java)에서 확인할 수 있습니다.
+
+### 전체 리팩토링 검증 요약
+
+| 문제 | 최종 선택 | 검증 결과와 해석 범위 |
 | --- | --- | --- |
-| 연관관계와 삭제 정책 | cross-aggregate 식별자 참조 + 도메인별 Soft Delete + 명시적 삭제 | main entity 관계/cascade annotation **0개**, long-lived schema FK **16개 → fresh schema 0개**, 삭제 진단 **8/8 통과** |
-| 관계 제거 후 N+1 | 페이지 조회 + 연결 ID·이미지 `IN` batch read model | Diary **6건 13 queries → 1건·30건 모두 3 queries**, 증가량 ≤ 1·전체 ≤ 5 회귀 조건 |
-| deep OFFSET의 스캔 비용과 페이지 중복·누락 | `(created_at, diary_id)` 복합 keyset cursor | p95 **90.55 → 13.62ms(84.96% 감소·6.65배)**, p99 **98.20 → 17.64ms(82.04% 감소·5.57배)** |
-| 식물 관리 알림의 단건 처리·동기 FCM·중복 실행 | user keyset + JDBC batch + Transactional Outbox + MySQL Named Lock(`GET_LOCK`)·DB unique key | 5,000건 DB 경로 **55.444초 → 1.009초(54.95배)**, 100,000건 pipeline **33.642초**, backlog **0** |
-| raw Refresh Token 저장과 동시 재사용 | SHA-256 fingerprint + 조건부 1-row rotation | raw bearer token 미저장, 동시 재사용을 원자적으로 거부 |
+| 객체 연관관계와 삭제 전파 | 식별자 참조 + 도메인별 Soft Delete + 명시적 삭제 | source diagnostic으로 main entity의 JPA 관계·cascade annotation **0개**를 강제하고, 삭제·이력 보존 정책을 **8개 Docker MySQL 시나리오**로 검증 |
+| 물리 FK 제거 후 정합성 | 서비스 참조 검증 + 28개 무결성 진단 + 충돌별 row lock | long-lived 로컬 DB에서 과거 FK **16개**, fresh schema에서 **0개**를 관측. `16 → 0`은 운영 보장이 아닌 로컬 schema 진단 결과 |
+| Diary N+1 | 페이지 조회 + 연결 ID·이미지 `IN` 일괄 조회 | 수정 전 6건에서 **13 queries**를 관측. 현재 회귀 테스트는 1건에서 30건으로 늘어도 query 증가량 ≤ 1, 전체 ≤ 5를 강제하며 최신 로컬 실행은 **3 → 3 queries** |
+| Diary deep OFFSET | `(created_at, diary_id)` keyset cursor | 12만 행·offset 8만·20 req/s의 warm steady-state HTTP 비교에서 p95 **90.55 → 13.62ms(84.96% 감소)**, p99 **98.20 → 17.64ms(82.04% 감소)** |
+| 대량 관리 알림 | user keyset + JDBC batch + Transactional Outbox | 5,000건 DB 경로 **55,444 → 1,009ms** 단일 관측, 100,000건 pipeline 처리 후 backlog **0** |
+| Refresh Token 재사용 | SHA-256 fingerprint + 조건부 1-row rotation | raw token을 저장하지 않고, 동일 old token을 사용한 동시 2요청에서 **성공 1건·거부 1건**을 MySQL 통합 테스트로 검증 |
 
-### 알림 처리량 수치가 서로 다른 이유
+Keyset 수치는 인증, Spring Security, Controller, DTO 변환, JSON 응답과 로컬 Docker MySQL을 포함한 HTTP 지연시간입니다. 같은 deep page를 반복 조회한 warm steady-state 결과이며 운영 환경의 cold-cache latency나 SLO로 해석하지 않습니다. 공개 저장소에는 개별 k6 원본 결과 대신 [aggregate baseline](infra/loadtest/baselines/diary-read-local.json)을 보존했습니다.
 
-5,000건과 100,000건 수치는 동일 로직에 데이터 크기만 바꾼 결과가 아닙니다.
-
-| 측정 | 포함 범위 | 결과 |
-| --- | --- | ---: |
-| 5,000건 전후 비교 | 이미 선정된 user ID를 사용자별 5,000 transaction으로 저장 vs 1,000건 단위 5 transaction으로 batch 저장 | **55.444초 → 1.009초** |
-| 100,000건 producer | keyset 대상 조회, 작업 조회·집계, Notification/Outbox 생성, 100 chunk commit | **9.609초**, 약 10,407건/초 |
-| 100,000건 drain | 500건씩 200회 claim, mock FCM 결과, 완료 상태 transaction | **24.033초**, 약 4,161건/초 |
-
-Outbox drain은 batch마다 claim과 completion을 별도 transaction으로 처리하고 수신 자격·상태·재시도 정보까지 갱신하므로 producer보다 처리량이 낮습니다. 과거 로컬 실행에서 관측된 294ms 등은 실행 시점과 경로가 다른 값이므로 최종 공개 수치와 섞지 않았습니다. FCM은 mock이어서 실제 Firebase network·quota를 포함하지 않으며, 모든 수치는 단일 WSL host의 로컬 회귀 기준이지 운영 SLO가 아닙니다.
-
-문제 정의, 수정 전·후 코드, 대안 비교, 선택 이유, 측정 조건과 남은 한계는 [Backend Refactoring Portfolio](docs/backend-refactoring-portfolio.md)에 정리했습니다.
+문제 정의, 수정 전·후 코드, 대안 비교, 선택 이유, 테스트 설계와 남은 한계는 [Backend Refactoring Portfolio](docs/backend-refactoring-portfolio.md)에 정리했습니다.
 
 ## 아키텍처
+
+<img width="1641" height="1427" alt="image" src="https://github.com/user-attachments/assets/98bde263-35d7-4726-a011-d22ca859632a" />
+
 
 ```mermaid
 flowchart LR
@@ -126,6 +221,10 @@ flowchart LR
     AI -. 외부 자산 .-> Models[Models · FAISS · OpenAI]
     Metrics[Prometheus · Grafana] -. 관측 .-> Backend
 ```
+
+## ERD
+
+<img width="1790" height="1582" alt="image" src="https://github.com/user-attachments/assets/59a00193-c230-491f-99fb-645b42cdf683" />
 
 - Mobile은 Backend API만 호출합니다.
 - Backend가 인증·권한·영속성·외부 연동과 AI 호출 경계를 소유합니다.
@@ -146,15 +245,11 @@ gardendoctor-public/
 └── scripts/              # 공개 안전 검사와 소스 진단
 ```
 
-Backend는 별도 저장소의 검증된 `88aad81` snapshot에서 가져왔습니다. 과거 secret 이력이 공개 저장소에 섞이지 않도록 Git history는 합치지 않고 source commit만 [`services/backend/UPSTREAM_COMMIT`](services/backend/UPSTREAM_COMMIT)에 기록했습니다.
-
 ## 빠른 시작
 
-### 1. 로컬 stack 실행
+### 로컬 실행
 
-공개 예시값은 로컬 개발용 placeholder이며 실제 운영 credential이 아닙니다.
-
-> 공개 클론만으로 Compose 기동, Backend 핵심 API, AI health, 테스트와 build를 재현할 수 있습니다. OAuth·지도·FCM·외부 AI처럼 자격 증명이 필요한 연동은 ignored `infra/.env`와 저장소 밖 자산을 준비한 로컬 환경에서만 활성화하며, 실제 키를 Git에 넣지 않습니다.
+로컬 환경에서는 Docker Compose로 Backend, AI, MySQL, Redis를 함께 실행할 수 있습니다. 공개 설정에는 실제 API 키나 운영 자격 증명이 포함되지 않습니다.
 
 ```bash
 cp infra/.env.example infra/.env
@@ -163,91 +258,23 @@ make stack-up
 make stack-smoke
 ```
 
-종료할 때는 `make stack-down`을 사용합니다. named volume은 유지되므로 데이터 초기화 명령은 아닙니다.
-
-| 서비스 | 로컬 주소 |
-| --- | --- |
-| Backend | `http://127.0.0.1:8080` |
-| Backend readiness | `http://127.0.0.1:8080/actuator/health/readiness` |
-| AI health | `http://127.0.0.1:8000/health` |
-
-MySQL은 host `3307`/container `3306`, Redis는 host/container 모두 `6379`를 사용합니다. `ddl-auto=update`는 빈 로컬 DB를 위한 기본값이며 운영 정책이 아닙니다.
-
-### 2. Mobile 실행
-
-Mobile은 Docker 상시 서비스가 아니라 기기 또는 에뮬레이터에서 실행합니다. `app-config`는 `infra/.env`에서 앱에 공개 가능한 값만 골라 ignored `infra/generated/mobile/app.local.json`을 생성합니다. DB, JWT, AWS, OAuth secret은 앱에 전달하지 않습니다.
+실행을 종료할 때는 다음 명령을 사용합니다.
 
 ```bash
-make app-config
-make app-get
-make app-generate
-make app-check
-make app-run
+make stack-down
 ```
 
-Android emulator에서는 `adb reverse tcp:8080 tcp:8080`으로 Compose Backend에 연결할 수 있습니다. 실제 기기나 release build에는 해당 기기에서 접근 가능한 HTTPS API URL이 필요합니다.
-
-[`infra/config/mobile/public.json`](infra/config/mobile/public.json)은 의도적으로 유효하지 않은 API 주소와 빈 provider key를 사용합니다. 공개 APK는 안전한 build artifact이며 라이브 기능 데모 APK가 아닙니다.
-
-### 3. 선택형 서비스
+전체 코드 검증은 다음 명령으로 실행합니다. Java 17, Python 3와 Flutter 개발 환경이 필요합니다.
 
 ```bash
-# Backend와 필수 의존성 stack 또는 AI 서비스 실행
-make backend-up
-make ai-up
-
-# 관측성 profile
-make observability-up
-
-# 부하 테스트 profile
-make loadtest-smoke
+make verify
 ```
 
-모든 환경변수 이름과 안전한 예시는 [`infra/.env.example`](infra/.env.example), 세부 운영 명령은 [`infra/README.md`](infra/README.md)를 참고하세요.
+Mobile 실행, Firebase 선택 연동, 관측성, 부하 테스트와 환경변수 설정은 [Infrastructure Guide](infra/README.md)를 참고하세요.
 
-## Firebase 선택 연동
+## 공개 범위
 
-기본 stack은 Firebase와 실제 FCM 전송을 명시적으로 비활성화합니다. FCM 시연이 필요할 때만 service-account JSON을 **저장소 밖**에 두고 `infra/.env`의 `FIREBASE_SERVICE_ACCOUNT_HOST_PATH`에 그 절대경로를 설정합니다.
-
-```bash
-make firebase-check
-make firebase-secret-check
-make stack-up-firebase
-```
-
-[`infra/compose.firebase.yaml`](infra/compose.firebase.yaml)은 호스트 JSON을 컨테이너의 `/run/secrets/firebase-admin.json`에 read-only로 연결합니다. JSON 파일을 저장소나 `infra/` 안으로 복사하지 마세요.
-
-## 하나의 환경변수 계약
-
-- 공개 계약: `infra/.env.example`
-- 실제 로컬 값: ignored `infra/.env`
-- Mobile 투영 결과: ignored `infra/generated/mobile/app.local.json`
-- 컨테이너 주입: `infra/compose.yaml`에서 서비스별 allowlist로 명시
-
-App/Service 하위에 별도 `.env`를 만들지 않습니다. 실제 값은 README, Compose, `application.properties`에 복사하지 않고 `infra/.env`와 저장소 밖 secret·asset 경로에서만 관리합니다.
-
-## 검증
-
-```bash
-make public-check     # secret·금지 자산 공개 여부
-make backend-check    # Backend test + source diagnostics
-make ai-syntax        # AI Python syntax
-make app-check        # Flutter format + analyze + test
-make verify           # 기본 통합 검증
-
-# 정량 Backend 진단(MySQL·Redis 실행 및 integration DB password 필요)
-cd services/backend && ./gradlew portfolioIntegrationDiagnostics
-```
-
-`portfolioIntegrationDiagnostics`는 N+1·batch·query plan 등 외부 MySQL/Redis가 필요한 포트폴리오 진단을 실행하며 `INTEGRATION_DATASOURCE_PASSWORD`를 로컬 환경에서 주입해야 합니다. `make verify-full`은 Mobile debug APK와 Backend JAR를 만들고 전체 Compose stack smoke test까지 수행합니다. 이 smoke test는 Backend readiness와 AI의 `ok` 또는 `degraded` 응답을 확인하며, 외부 연동이나 AI 추론 성공까지 보장하지는 않습니다.
-
-## 공개·운영 경계
-
-실제 `.env`, OAuth/AWS/Firebase credential, Firebase service-account JSON, 모바일 Firebase 설정, 모델 가중치, 원본 PDF, 학습·테스트 데이터, 런타임 DB는 저장소에 포함하지 않습니다. 자세한 기준은 [Public Asset Policy](docs/public-assets.md)를 따릅니다.
-
-연락처가 포함된 농장 원본 Excel도 공개 대상에서 제외했습니다. 위치 기반 흐름 재현에는 실제 농장·운영자 정보를 나타내지 않는 합성 fixture 3건만 사용하며, `APP_INIT_SEED_DATA_ENABLED=true`일 때 로컬 DB에 적재됩니다.
-
-단일 [`infra/compose.yaml`](infra/compose.yaml)은 로컬 개발과 단일 호스트 실행의 기반입니다. 인터넷 운영 전에는 TLS/reverse proxy, secret manager 또는 Docker secrets, DB migration, backup/restore, resource limit, log rotation을 별도로 검토해야 합니다. 공개 placeholder와 `ddl-auto=update`를 운영에 사용하지 마세요.
+실제 `.env`, OAuth·AWS·Firebase 자격 증명, Firebase service-account JSON, 모델 가중치와 운영 데이터는 저장소에 포함하지 않습니다. 외부 자격 증명이 필요한 기능은 공개 설정에서 비활성화되며, 자세한 기준은 [Public Asset Policy](docs/public-assets.md)를 따릅니다.
 
 ## License
 
