@@ -223,7 +223,7 @@ class _DailyLogScreenState extends State<DailyLogScreen> {
   // ⭐️ 식물별/전체 필터 드롭다운
   Widget _buildPlantFilterDropdown() {
     return DropdownButtonFormField<int>(
-      initialValue: _selectedPlantId,
+      value: _selectedPlantId,
       isExpanded: true,
       decoration: InputDecoration(
         filled: true,
