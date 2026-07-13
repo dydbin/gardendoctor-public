@@ -68,13 +68,13 @@ GardenDoctor(텃밭닥터)는 도시농업 입문자가 전문 지식 부족 때
 | 사용자 경험 | 이메일·소셜 로그인, 프로필, 알림함 | Mobile · Backend · OAuth/FCM |
 | 운영 지원 | 헬스체크, 메트릭, 대시보드, 부하 테스트 | Actuator · Prometheus · Grafana · k6 |
 
-## Backend 문제 해결과 정량 검증
+## 리팩토링 및 문제 해결
 
-이 리팩토링은 처음부터 성능 수치를 만들기 위해 시작한 작업이 아닙니다. 1차 목표는 **생명주기가 다른 도메인을 강하게 묶고 있던 JPA 연관관계와 물리 FK를 정리하고, broad cascade에 의한 예측하지 못한 Hard Delete를 제거하는 것**이었습니다.
+이 리팩토링의 1차 목표는 **생명주기가 다른 도메인을 강하게 묶고 있던 JPA 연관관계와 물리 FK를 정리하고, broad cascade에 의한 예측하지 못한 Hard Delete를 제거하는 것**이었습니다.
 
 연결 row 삭제가 부모 Diary와 ImageFile까지 전파되는 문제를 재현한 뒤, cross-aggregate 객체 관계를 식별자 참조로 바꾸고 사용자·UserPlant·Plant·Farm에는 도메인별 Soft Delete를 적용했습니다. 이 과정에서 ORM과 DB가 맡던 정합성 책임이 애플리케이션으로 이동했고, 이를 참조 검증, 무결성 진단, shared/exclusive row lock으로 보완했습니다.
 
-객체 그래프를 제거하자 DTO의 LAZY 순회로 발생하던 N+1이 명확하게 드러났습니다. 이를 batch read model로 바꾼 뒤에는 무제한 목록과 deep OFFSET, 대량 알림의 단건 transaction과 외부 FCM 장애 경계, Refresh Token 동시 재사용 문제까지 순서대로 확장해 해결했습니다.
+연관관계를 제거하는 과정에서 DTO의 LAZY 객체 그래프 순회가 N+1의 원인임을 확인했습니다. 이후 필요한 데이터를 명시적인 batch read model로 조회하도록 변경했습니다. 이를 batch read model로 바꾼 뒤에는 무제한 목록과 deep OFFSET, 대량 알림의 단건 transaction과 외부 FCM 장애 경계, Refresh Token 동시 재사용 문제까지 순서대로 확장해 해결했습니다.
 
 ```mermaid
 flowchart LR
@@ -88,7 +88,7 @@ flowchart LR
     G --> H
 ```
 
-### 정량 성과 요약
+### 정량적 성능 테스트 요약
 
 | 리팩토링 흐름 | 최종 선택 | 검증 결과 |
 | --- | --- | --- |
